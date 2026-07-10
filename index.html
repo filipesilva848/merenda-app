@@ -175,7 +175,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="config.js"></script>
 <script>
-  const supabase = window.SUPABASE_URL && window.SUPABASE_ANON_KEY
+  const db = window.SUPABASE_URL && window.SUPABASE_ANON_KEY
     ? window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY)
     : null;
 
@@ -234,7 +234,7 @@
 
   closeBtn.addEventListener('click', async () => {
     if (currentOrder.length === 0) return;
-    if (!supabase) {
+    if (!db) {
       statusEl.textContent = 'Configure o config.js com sua URL e chave do Supabase antes de salvar.';
       statusEl.className = 'status err';
       return;
@@ -243,7 +243,7 @@
     statusEl.textContent = 'Salvando...';
     statusEl.className = 'status';
 
-    const { error } = await supabase.from('merenda_pedidos').insert({
+    const { error } = await db.from('merenda_pedidos').insert({
       itens: currentOrder,
       criado_em: new Date().toISOString()
     });
@@ -262,11 +262,11 @@
   });
 
   async function loadHistory() {
-    if (!supabase) {
+    if (!db) {
       historyListEl.innerHTML = '<p class="empty-msg">Configure o Supabase para ver o histórico.</p>';
       return;
     }
-    const { data, error } = await supabase
+    const { data, error } = await db
       .from('merenda_pedidos')
       .select('*')
       .order('criado_em', { ascending: false })
