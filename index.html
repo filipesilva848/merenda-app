@@ -284,7 +284,7 @@
       <div class="order-card">
         <div class="order-date">${new Date(order.criado_em).toLocaleString('pt-BR')}</div>
         <ul>
-          ${order.itens.map(i => `<li>${escapeHtml(i.name)} x${i.qty}</li>`).join('')}
+          ${Array.isArray(order.itens) ? order.itens.map(i => `<li>${escapeHtml(i.name)} x${i.qty}</li>`).join('') : '<li>(dados inválidos)</li>'}
         </ul>
       </div>
     `).join('');
