@@ -44,6 +44,15 @@
     box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     margin-bottom: 16px;
   }
+  label {
+    font-size: 0.85rem;
+    color: var(--muted);
+    display: block;
+    margin-bottom: 4px;
+  }
+  .name-row {
+    margin-bottom: 12px;
+  }
   .form-row {
     display: flex;
     gap: 8px;
@@ -71,6 +80,10 @@
     color: white;
   }
   .btn-add:hover { background: var(--primary-dark); }
+  .btn-add:disabled {
+    background: #a9b8b1;
+    cursor: not-allowed;
+  }
   ul#itemList {
     list-style: none;
     padding: 0;
@@ -86,6 +99,7 @@
   ul#itemList li:last-child { border-bottom: none; }
   .item-name { font-weight: 500; }
   .item-qty { color: var(--muted); margin-left: 8px; }
+  .item-person { color: var(--muted); font-size: 0.8rem; display: block; }
   .remove-btn {
     background: transparent;
     color: #c0392b;
@@ -148,9 +162,14 @@
 <body>
 <div class="container">
   <h1>🍎 Lista de Merenda</h1>
-  <p class="subtitle">Monte seu pedido e feche a lista quando terminar</p>
+  <p class="subtitle">Todo mundo vê a lista atualizar em tempo real</p>
 
   <div class="card">
+    <div class="name-row">
+      <label for="personName">Seu nome</label>
+      <input type="text" id="personName" placeholder="Ex: Maria">
+    </div>
+
     <div class="form-row">
       <input type="text" id="itemName" placeholder="Nome do item (ex: Bolacha)">
       <input type="number" id="itemQty" placeholder="Qtd" min="1" value="1">
@@ -158,7 +177,7 @@
     </div>
 
     <ul id="itemList"></ul>
-    <p class="empty-msg" id="emptyMsg">Nenhum item adicionado ainda.</p>
+    <p class="empty-msg" id="emptyMsg">Nenhum item na lista ainda.</p>
 
     <div class="actions">
       <button class="btn-close" id="closeBtn" disabled>Fechar Pedido</button>
@@ -179,37 +198,20 @@
     ? window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY)
     : null;
 
-  let currentOrder = [];
-
+  const personNameEl = document.getElementById('personName');
   const itemNameEl = document.getElementById('itemName');
   const itemQtyEl = document.getElementById('itemQty');
+  const addBtn = document.getElementById('addBtn');
   const itemListEl = document.getElementById('itemList');
   const emptyMsgEl = document.getElementById('emptyMsg');
   const closeBtn = document.getElementById('closeBtn');
   const statusEl = document.getElementById('status');
   const historyListEl = document.getElementById('historyList');
 
-  function renderList() {
-    itemListEl.innerHTML = '';
-    emptyMsgEl.style.display = currentOrder.length ? 'none' : 'block';
-    closeBtn.disabled = currentOrder.length === 0;
-
-    currentOrder.forEach((item, idx) => {
-      const li = document.createElement('li');
-      li.innerHTML = `
-        <span><span class="item-name">${escapeHtml(item.name)}</span><span class="item-qty">x${item.qty}</span></span>
-        <button class="remove-btn" data-idx="${idx}">✕</button>
-      `;
-      itemListEl.appendChild(li);
-    });
-
-    itemListEl.querySelectorAll('.remove-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        currentOrder.splice(Number(btn.dataset.idx), 1);
-        renderList();
-      });
-    });
-  }
+  personNameEl.value = localStorage.getItem('merenda_nome') || '';
+  personNameEl.addEventListener('change', () => {
+    localStorage.setItem('merenda_nome', personNameEl.value.trim());
+  });
 
   function escapeHtml(str) {
     const div = document.createElement('div');
@@ -217,47 +219,111 @@
     return div.innerHTML;
   }
 
-  document.getElementById('addBtn').addEventListener('click', () => {
-    const name = itemNameEl.value.trim();
+  function setStatus(text, kind) {
+    statusEl.textContent = text;
+    statusEl.className = 'status' + (kind ? ' ' + kind : '');
+  }
+
+  function renderActiveList(items) {
+    itemListEl.innerHTML = '';
+    emptyMsgEl.style.display = items.length ? 'none' : 'block';
+    closeBtn.disabled = items.length === 0;
+
+    items.forEach(item => {
+      const li = document.createElement('li');
+      li.innerHTML = `
+        <span>
+          <span class="item-name">${escapeHtml(item.item)}</span><span class="item-qty">x${item.quantidade}</span>
+          <span class="item-person">adicionado por ${escapeHtml(item.nome_pessoa)}</span>
+        </span>
+        <button class="remove-btn" data-id="${item.id}">✕</button>
+      `;
+      itemListEl.appendChild(li);
+    });
+
+    itemListEl.querySelectorAll('.remove-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        await db.from('merenda_itens').delete().eq('id', btn.dataset.id);
+      });
+    });
+  }
+
+  async function loadActiveList() {
+    if (!db) return;
+    const { data, error } = await db
+      .from('merenda_itens')
+      .select('*')
+      .eq('status', 'aberto')
+      .order('criado_em', { ascending: true });
+
+    if (error) {
+      setStatus('Erro ao carregar lista: ' + error.message, 'err');
+      return;
+    }
+    renderActiveList(data || []);
+  }
+
+  addBtn.addEventListener('click', async () => {
+    const nome = personNameEl.value.trim();
+    const item = itemNameEl.value.trim();
     const qty = parseInt(itemQtyEl.value, 10) || 1;
-    if (!name) return;
-    currentOrder.push({ name, qty });
+
+    if (!nome) {
+      setStatus('Preencha seu nome antes de adicionar um item.', 'err');
+      personNameEl.focus();
+      return;
+    }
+    if (!item) {
+      itemNameEl.focus();
+      return;
+    }
+    if (!db) {
+      setStatus('Configure o config.js com sua URL e chave do Supabase.', 'err');
+      return;
+    }
+
+    addBtn.disabled = true;
+    localStorage.setItem('merenda_nome', nome);
+
+    const { error } = await db.from('merenda_itens').insert({
+      nome_pessoa: nome,
+      item: item,
+      quantidade: qty,
+      status: 'aberto'
+    });
+
+    addBtn.disabled = false;
+
+    if (error) {
+      setStatus('Erro ao adicionar item: ' + error.message, 'err');
+      return;
+    }
+
+    setStatus('', '');
     itemNameEl.value = '';
     itemQtyEl.value = '1';
     itemNameEl.focus();
-    renderList();
   });
 
   itemNameEl.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') document.getElementById('addBtn').click();
+    if (e.key === 'Enter') addBtn.click();
   });
 
   closeBtn.addEventListener('click', async () => {
-    if (currentOrder.length === 0) return;
-    if (!db) {
-      statusEl.textContent = 'Configure o config.js com sua URL e chave do Supabase antes de salvar.';
-      statusEl.className = 'status err';
-      return;
-    }
+    if (!db) return;
     closeBtn.disabled = true;
-    statusEl.textContent = 'Salvando...';
-    statusEl.className = 'status';
+    setStatus('Fechando pedido...', '');
 
-    const { error } = await db.from('merenda_pedidos').insert({
-      itens: currentOrder,
-      criado_em: new Date().toISOString()
-    });
+    const { error } = await db
+      .from('merenda_itens')
+      .update({ status: 'fechado', fechado_em: new Date().toISOString() })
+      .eq('status', 'aberto');
 
     if (error) {
-      statusEl.textContent = 'Erro ao salvar: ' + error.message;
-      statusEl.className = 'status err';
+      setStatus('Erro ao fechar pedido: ' + error.message, 'err');
       closeBtn.disabled = false;
     } else {
-      statusEl.textContent = 'Pedido salvo com sucesso!';
-      statusEl.className = 'status ok';
-      currentOrder = [];
-      renderList();
-      loadHistory();
+      setStatus('Pedido fechado com sucesso!', 'ok');
     }
   });
 
@@ -267,31 +333,51 @@
       return;
     }
     const { data, error } = await db
-      .from('merenda_pedidos')
+      .from('merenda_itens')
       .select('*')
-      .order('criado_em', { ascending: false })
-      .limit(20);
+      .eq('status', 'fechado')
+      .order('fechado_em', { ascending: false })
+      .limit(100);
 
     if (error) {
       historyListEl.innerHTML = `<p class="empty-msg">Erro ao carregar histórico: ${escapeHtml(error.message)}</p>`;
       return;
     }
     if (!data || data.length === 0) {
-      historyListEl.innerHTML = '<p class="empty-msg">Nenhum pedido salvo ainda.</p>';
+      historyListEl.innerHTML = '<p class="empty-msg">Nenhum pedido fechado ainda.</p>';
       return;
     }
-    historyListEl.innerHTML = data.map(order => `
+
+    const groups = new Map();
+    data.forEach(row => {
+      const key = row.fechado_em;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(row);
+    });
+
+    historyListEl.innerHTML = Array.from(groups.entries()).map(([fechadoEm, rows]) => `
       <div class="order-card">
-        <div class="order-date">${new Date(order.criado_em).toLocaleString('pt-BR')}</div>
+        <div class="order-date">${new Date(fechadoEm).toLocaleString('pt-BR')}</div>
         <ul>
-          ${Array.isArray(order.itens) ? order.itens.map(i => `<li>${escapeHtml(i.name)} x${i.qty}</li>`).join('') : '<li>(dados inválidos)</li>'}
+          ${rows.map(r => `<li>${escapeHtml(r.item)} x${r.quantidade} <span class="item-person">(${escapeHtml(r.nome_pessoa)})</span></li>`).join('')}
         </ul>
       </div>
     `).join('');
   }
 
-  renderList();
+  function subscribeToChanges() {
+    if (!db) return;
+    db.channel('merenda_itens-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'merenda_itens' }, () => {
+        loadActiveList();
+        loadHistory();
+      })
+      .subscribe();
+  }
+
+  loadActiveList();
   loadHistory();
+  subscribeToChanges();
 </script>
 </body>
 </html>
