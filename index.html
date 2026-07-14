@@ -108,6 +108,11 @@
   .autocomplete-item .prod-preco { color: var(--primary); font-weight: 600; font-size: 0.85rem; }
   .autocomplete-empty { padding: 10px 12px; color: var(--muted); font-size: 0.85rem; text-align: center; }
   .price-input { max-width: 100px; }
+  .debt-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 4px; border-bottom: 1px solid var(--border); }
+  .debt-row:last-child { border-bottom: none; }
+  .debt-info { display: flex; flex-direction: column; gap: 2px; }
+  .debt-amount { font-weight: 700; font-size: 1.1rem; color: var(--warning); }
+  .debt-admin { font-size: 0.8rem; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -141,10 +146,8 @@
   </div>
   <div class="container">
     <div class="card debt-card" id="debtCard" style="display:none;">
-      <label>Sua dívida</label>
-      <div class="debt-amount" id="debtAmount">R$ 0,00</div>
-      <div class="debt-detail" id="debtDetail"></div>
-      <button class="btn-warning" style="margin-top:10px; width:100%;" id="payBtn">Pagar com PIX</button>
+      <label>Suas dívidas</label>
+      <div id="debtList"></div>
     </div>
     <div id="adminPanel" style="display:none;">
       <div class="admin-grid">
@@ -153,6 +156,7 @@
         <button class="btn-primary" id="reopenPedidoBtn" style="display:none;">Reabrir Pedido</button>
         <button class="btn-primary" id="contasBtn">Contas a Pagar</button>
         <button class="btn-primary" id="produtosBtn">Produtos</button>
+        <button class="btn-primary" id="pixConfigBtn">Chave PIX</button>
         <button class="btn-danger" id="clearDbBtn" style="grid-column: span 2;">Limpar Banco</button>
       </div>
     </div>
@@ -198,6 +202,18 @@
         <button class="btn-success btn-sm" id="addProdBtn">+</button>
       </div>
       <div id="produtosList"></div>
+    </div>
+    <div class="card" id="pixConfigCard" style="display:none;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <h3>Chave PIX</h3>
+        <button class="btn-outline btn-sm" id="closePixConfigBtn">Voltar</button>
+      </div>
+      <p style="font-size:0.85rem; color:var(--muted); margin-bottom:12px;">Esta chave será exibida quando alguém clicar em "Pagar com PIX".</p>
+      <div class="form-row" style="margin-top:0;">
+        <input type="text" id="pixConfigInput" placeholder="Ex: email@exemplo.com ou CPF">
+        <button class="btn-success btn-sm" id="savePixConfigBtn">Salvar</button>
+      </div>
+      <p class="status" id="pixConfigStatus"></p>
     </div>
     <div class="history" id="historySection">
       <h2>Pedidos anteriores</h2>
@@ -292,13 +308,14 @@ let isAdmin = false;
 let currentPedidoId = null;
 let lastClosedPedidoId = null;
 let dbProdutos = [];
+let dbPixKeys = [];
 
 const $ = id => document.getElementById(id);
 const loginScreen = $('loginScreen'), appScreen = $('appScreen');
 const loginNameEl = $('loginName'), loginPasswordEl = $('loginPassword');
 const adminToggle = $('adminToggle'), adminFields = $('adminFields'), loginBtn = $('loginBtn');
 const headerNameEl = $('headerName'), adminBadgeEl = $('adminBadge'), logoutBtn = $('logoutBtn');
-const debtCard = $('debtCard'), debtAmountEl = $('debtAmount'), debtDetailEl = $('debtDetail');
+const debtCard = $('debtCard'), debtListEl = $('debtList');
 const adminPanel = $('adminPanel'), openPedidoBtn = $('openPedidoBtn'), closePedidoBtn = $('closePedidoBtn'), reopenPedidoBtn = $('reopenPedidoBtn');
 const contasBtn = $('contasBtn'), clearDbBtn = $('clearDbBtn'), produtosBtn = $('produtosBtn');
 const pedidoCard = $('pedidoCard'), pedidoTitle = $('pedidoTitle');
@@ -315,6 +332,8 @@ const cancelEditContaBtn = $('cancelEditContaBtn'), saveEditContaBtn = $('saveEd
 const editProdModal = $('editProdModal'), editProdNameEl = $('editProdName'), editProdPriceEl = $('editProdPrice');
 const cancelEditProdBtn = $('cancelEditProdBtn'), saveEditProdBtn = $('saveEditProdBtn');
 const autocompleteListEl = $('autocompleteList');
+const pixConfigBtn = $('pixConfigBtn'), pixConfigCard = $('pixConfigCard'), pixConfigInput = $('pixConfigInput');
+const closePixConfigBtn = $('closePixConfigBtn'), savePixConfigBtn = $('savePixConfigBtn'), pixConfigStatusEl = $('pixConfigStatus');
 
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 function setStatus(t, k) { statusEl.textContent = t; statusEl.className = 'status' + (k ? ' ' + k : ''); }
@@ -325,7 +344,7 @@ function formatDate(iso) { return new Date(iso).toLocaleString('pt-BR'); }
 function hideAllSections() {
   pedidoCard.style.display = 'none'; noPedidoCard.style.display = 'none';
   adminPanel.style.display = 'none'; debtCard.style.display = 'none';
-  $('historySection').style.display = 'none';
+  $('historySection').style.display = 'none'; pixConfigCard.style.display = 'none';
 }
 function showMainSections() {
   adminPanel.style.display = isAdmin ? 'block' : 'none';
@@ -349,7 +368,7 @@ function doLogin() {
   adminBadgeEl.style.display = isAdmin ? 'inline' : 'none';
   adminPanel.style.display = isAdmin ? 'block' : 'none';
   loginScreen.style.display = 'none'; appScreen.style.display = 'block';
-  loadProdutos(); loadPedido(); loadUserDebt(); loadHistory(); subscribeToChanges();
+  loadProdutos(); loadPixKeys(); loadPedido(); loadUserDebt(); loadHistory(); subscribeToChanges();
 }
 
 logoutBtn.addEventListener('click', () => {
@@ -364,6 +383,33 @@ async function loadProdutos() {
   const { data } = await db.from('produtos').select('*').order('nome', { ascending: true });
   if (data) dbProdutos = data;
 }
+
+// CHAVE PIX (BANCO - por admin)
+async function loadPixKeys() {
+  if (!db) return;
+  const { data } = await db.from('app_config').select('*').eq('chave', 'pix_key');
+  dbPixKeys = data || [];
+}
+
+pixConfigBtn.addEventListener('click', () => { if (!isAdmin) return; hideAllSections(); pixConfigCard.style.display = 'block'; const myKey = dbPixKeys.find(k => k.admin_nome === currentUser); pixConfigInput.value = myKey ? myKey.valor : ''; pixConfigStatusEl.textContent = ''; });
+closePixConfigBtn.addEventListener('click', () => { pixConfigCard.style.display = 'none'; showMainSections(); });
+
+savePixConfigBtn.addEventListener('click', async () => {
+  if (!isAdmin || !db) return;
+  const valor = pixConfigInput.value.trim();
+  const existing = dbPixKeys.find(k => k.admin_nome === currentUser);
+  if (existing) {
+    await db.from('app_config').update({ valor }).eq('id', existing.id);
+    existing.valor = valor;
+  } else {
+    const { data } = await db.from('app_config').insert({ chave: 'pix_key', valor, admin_nome: currentUser }).select();
+    if (data && data.length > 0) dbPixKeys.push(data[0]);
+  }
+  pixConfigStatusEl.textContent = 'Chave PIX salva!';
+  pixConfigStatusEl.className = 'status ok';
+  setTimeout(() => { pixConfigStatusEl.textContent = ''; }, 3000);
+});
+pixConfigInput.addEventListener('keydown', e => { if (e.key === 'Enter') savePixConfigBtn.click(); });
 
 // AUTOCOMPLETE
 function showAutocomplete(query) {
@@ -476,7 +522,7 @@ closePedidoBtn.addEventListener('click', async () => {
   const grandTotal = participants.reduce((s, name) => s + totals[name], 0);
   closePedidoBtn.disabled = true;
   await db.from('pedidos').update({ status: 'fechado', valor_total: grandTotal, fechado_em: new Date().toISOString() }).eq('id', currentPedidoId);
-  await db.from('contas_pagar').insert(participants.map(name => ({ pedido_id: currentPedidoId, nome_pessoa: name, valor: totals[name], pago: false })));
+  await db.from('contas_pagar').insert(participants.map(name => ({ pedido_id: currentPedidoId, nome_pessoa: name, admin_criador: currentUser, valor: totals[name], pago: false })));
   setStatus('Pedido fechado com sucesso!', 'ok'); loadPedido(); loadHistory(); loadUserDebt();
 });
 
@@ -504,8 +550,43 @@ async function loadUserDebt() {
   if (!db || !currentUser) return;
   const { data } = await db.from('contas_pagar').select('*').eq('nome_pessoa', currentUser).eq('pago', false);
   if (data && data.length > 0) {
-    debtAmountEl.textContent = formatCurrency(data.reduce((s, c) => s + c.valor, 0));
-    debtDetailEl.textContent = `${data.length} conta(s) pendente(s)`;
+    debtListEl.innerHTML = data.map(c => {
+      const adminKey = dbPixKeys.find(k => k.admin_nome === c.admin_criador);
+      const pixOk = adminKey && adminKey.valor;
+      return `<div class="debt-row">
+        <div class="debt-info">
+          <span class="debt-amount">${formatCurrency(c.valor)}</span>
+          <span class="debt-admin">Pedido de ${escapeHtml(c.admin_criador || 'Admin')}</span>
+        </div>
+        <button class="btn-warning btn-sm debt-pay-btn" data-conta-id="${c.id}" data-admin="${escapeHtml(c.admin_criador || '')}">Pagar</button>
+      </div>`;
+    }).join('');
+    debtListEl.querySelectorAll('.debt-pay-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const adminName = btn.dataset.admin;
+        const adminKey = dbPixKeys.find(k => k.admin_nome === adminName);
+        const pixKey = adminKey ? adminKey.valor : '';
+        if (!pixKey) {
+          pixKeyText.textContent = `FALE DIRETAMENTE COM O(A) ${adminName.toUpperCase()} PARA SOLICITAR SEU PIX.`;
+          pixKeyText.style.fontFamily = 'inherit';
+          pixKeyText.style.fontWeight = '700';
+          pixKeyText.style.color = 'var(--danger)';
+          document.getElementById('qrcode').innerHTML = '';
+          copyPixBtn.style.display = 'none';
+        } else {
+          pixKeyText.textContent = pixKey;
+          pixKeyText.style.fontFamily = 'monospace';
+          pixKeyText.style.fontWeight = '';
+          pixKeyText.style.color = '';
+          copyPixBtn.style.display = '';
+          copyStatusEl.textContent = '';
+          const qrEl = document.getElementById('qrcode');
+          qrEl.innerHTML = '';
+          new QRCode(qrEl, { text: pixKey, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.M });
+        }
+        pixModal.classList.add('active');
+      });
+    });
     debtCard.style.display = 'block';
   } else { debtCard.style.display = 'none'; }
 }
@@ -517,13 +598,13 @@ closeContasBtn.addEventListener('click', () => { contasCard.style.display = 'non
 
 async function loadContas() {
   if (!db) return;
-  const { data, error } = await db.from('contas_pagar').select('*, pedidos:fkey_pedido(id, fechado_em)').order('criado_em', { ascending: false });
+  const { data, error } = await db.from('contas_pagar').select('*').order('criado_em', { ascending: false });
   if (error) { contasListEl.innerHTML = '<p class="empty-msg">Erro.</p>'; return; }
   if (!data || data.length === 0) { contasListEl.innerHTML = '<p class="empty-msg">Nenhuma conta.</p>'; return; }
   contasListEl.innerHTML = data.map(c => {
-    const d = c.pedidos ? formatDate(c.pedidos.fechado_em) : '-';
+    const adminLabel = c.admin_criador ? ` | Criado por ${escapeHtml(c.admin_criador)}` : '';
     return `<div class="conta-item">
-      <div class="conta-info"><div class="conta-name">${escapeHtml(c.nome_pessoa)}</div><div class="conta-pedido">Pedido de ${d}</div></div>
+      <div class="conta-info"><div class="conta-name">${escapeHtml(c.nome_pessoa)}</div><div class="conta-pedido">${formatDate(c.criado_em)}${adminLabel}</div></div>
       <span class="conta-valor ${c.pago ? 'pago' : 'pendente'}">${formatCurrency(c.valor)}</span>
       <div class="conta-actions">
         ${!c.pago ? `<button class="btn-success btn-sm" data-action="pay" data-id="${c.id}">Baixa</button>` : ''}
@@ -647,22 +728,9 @@ function subscribeToChanges() {
 
 // PIX
 const pixModal = $('pixModal'), pixKeyText = $('pixKeyText'), copyPixBtn = $('copyPixBtn'), copyStatusEl = $('copyStatus'), closePixBtn = $('closePixBtn');
-const payBtn = $('payBtn');
-let qrInstance = null;
-
-payBtn.addEventListener('click', () => {
-  const key = window.PIX_KEY || '';
-  if (!key) { alert('Chave PIX não configurada.'); return; }
-  pixKeyText.textContent = key;
-  copyStatusEl.textContent = '';
-  const qrEl = document.getElementById('qrcode');
-  qrEl.innerHTML = '';
-  qrInstance = new QRCode(qrEl, { text: key, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.M });
-  pixModal.classList.add('active');
-});
 
 copyPixBtn.addEventListener('click', () => {
-  const key = window.PIX_KEY || '';
+  const key = pixKeyText.textContent || '';
   if (!key) return;
   navigator.clipboard.writeText(key).then(() => {
     copyStatusEl.textContent = 'Chave copiada!';

@@ -41,6 +41,7 @@ Pode ser hospedado de graça no GitHub Pages.
      id bigint generated always as identity primary key,
      pedido_id bigint references pedidos(id) on delete cascade,
      nome_pessoa text not null,
+     admin_criador text not null default '',
      valor numeric not null default 0,
      pago boolean not null default false,
      criado_em timestamptz not null default now(),
@@ -55,11 +56,22 @@ Pode ser hospedado de graça no GitHub Pages.
      criado_em timestamptz not null default now()
    );
 
+   -- Tabela de configurações gerais do app (chave PIX por admin)
+   create table app_config (
+     id bigint generated always as identity primary key,
+     chave text not null default 'pix_key',
+     valor text not null default '',
+     admin_nome text not null,
+     criado_em timestamptz not null default now(),
+     unique(chave, admin_nome)
+   );
+
    -- Habilitar RLS
    alter table pedidos enable row level security;
    alter table merenda_itens enable row level security;
    alter table contas_pagar enable row level security;
    alter table produtos enable row level security;
+   alter table app_config enable row level security;
 
    -- Policies para pedidos
    create policy "Pedidos: inserir" on pedidos for insert with check (true);
@@ -84,6 +96,12 @@ Pode ser hospedado de graça no GitHub Pages.
    create policy "Produtos: ler" on produtos for select using (true);
    create policy "Produtos: atualizar" on produtos for update using (true);
    create policy "Produtos: deletar" on produtos for delete using (true);
+
+   -- Policies para app_config
+   create policy "Config: inserir" on app_config for insert with check (true);
+   create policy "Config: ler" on app_config for select using (true);
+   create policy "Config: atualizar" on app_config for update using (true);
+   create policy "Config: deletar" on app_config for delete using (true);
    ```
 
 3. Ative o **Realtime** nas quatro tabelas:
@@ -145,6 +163,7 @@ Depois, no GitHub: **Settings > Pages > Source: branch `main`, pasta `/`**.
 - **Fechar Pedido**: informa o valor total, o sistema divide igualmente entre os participantes e gera as contas a pagar.
 - **Produtos**: cadastra, edita e exclui produtos disponíveis. Aparece no autocompletar de todos.
 - **Contas a Pagar**: visualiza todas as contas, pode alterar valores, dar baixa (marcar como pago) ou excluir.
+- **Chave PIX**: cadastra ou altera a chave PIX usada nos pagamentos.
 - **Limpar Banco**: apaga todos os dados do sistema (pedidos, itens, contas e produtos).
 
 ### Real-time
